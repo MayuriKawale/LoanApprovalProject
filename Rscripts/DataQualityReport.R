@@ -17,6 +17,12 @@ library(kableExtra) # for kable styling
 ## load the dataset
 creditRisk <- read.csv("dataset/credit_risk_dataset.csv")
 
+## To avoid encoding errors, we convert all text to UTF-8 format
+creditRisk[] <- lapply(creditRisk, function(x){
+  if(is.character(x)){iconv(x, from = "UTF-8", to = "UTF-8", sub = "byte")}
+  else{x}
+})
+
 ## divide the dataset into numerical and categorical variables
 numData <- creditRisk %>%
   dplyr::select(is.numeric)
