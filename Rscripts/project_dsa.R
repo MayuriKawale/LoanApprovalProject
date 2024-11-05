@@ -174,3 +174,61 @@ writeLines(as.character(html_table), html_file)
 
 # Open the HTML file in default web browser
 browseURL(html_file)
+
+
+
+# Data Cleaning
+
+# Fix unrealistic values in person_age
+data <- data %>%
+  dplyr::mutate(person_age = ifelse(person_age>100, 100, person_age))
+
+# fix employment length
+
+data <- data %>%
+  dplyr::mutate(person_emp_length = ifelse(person_emp_length > 60, 60, person_emp_length))
+
+# Impute missing values
+median_emp_length <- median(data$person_emp_length, na.rm = TRUE)
+
+data <- data %>%
+  mutate(person_emp_length = ifelse(is.na(person_emp_length), median_emp_length, person_emp_length))
+
+
+median_int_rate <- median(data$loan_int_rate, na.rm = TRUE)
+data <- data %>%
+  mutate(loan_int_rate = ifelse(is.na(loan_int_rate), median_int_rate, loan_int_rate))
+
+# Handling Outliers
+
+income_cap <- quantile(data$person_income, 0.99)  # 99th percentile
+data <- data %>%
+  mutate(person_income = ifelse(person_income > income_cap, income_cap, person_income))
+
+summary(data)
+
+# distribution of loan amounts
+ggplot(data, aes(x = loan_amnt)) +
+  geom_histogram(bins = 30, fill = "red", color = "black") +
+  labs(title = "Distribution of Loan Amounts", x = "Loan Amount", y = "Count")
+
+
+
+# Pie chart for loan intent distribution
+loan_intent_data <- data %>%
+  count(loan_intent) %>%
+  mutate(pct = n / sum(n) * 100)  # Calculate percentage
+
+ggplot(loan_intent_data, aes(x = "", y = pct, fill = loan_intent)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y") +
+  labs(title = "Distribution of Loan Intent", x = NULL, y = NULL) +
+  theme_void() + 
+  theme(legend.title = element_blank())
+
+
+
+
+
+
+
