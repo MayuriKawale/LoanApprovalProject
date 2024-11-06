@@ -3,6 +3,8 @@ library(dplyr)
 library(ggplot2)
 library(mice)      # For predictive imputation model
 library(outliers)  # For Grubbs' test on outliers
+library(VIM) # For KNN imputation
+library(mice) # For PMM imputation
 
 # Set working directory and load the data
 setwd("/Users/peteroh/Desktop/Oh/OU/Fall 2024/DSA : ISE 5103/Final Project")
@@ -95,6 +97,14 @@ data <- data %>%
                                     person_emp_length)) %>%
   ungroup()
 
+# Option 3: Apply KNN imputation to the 'person_emp_length' column
+data_imputed_knn <- kNN(data, variable = "person_emp_length", k = 5, imp_var = FALSE)
+
+# Check for remaining missing values in 'person_emp_length'
+sum(is.na(data_imputed_knn$person_emp_length))
+sum(is.na(data_imputed_knn$loan_int_rate))
+
+
 # 2.2 Missing Values in loan_int_rate (Interest Rate)
 # Similar to person_emp_length, we use a combination of methods based on loan characteristics.
 
@@ -115,6 +125,20 @@ data <- data %>%
 imputed_data <- mice(data[, c("loan_int_rate", "loan_amnt", "loan_grade", "person_income")], 
                      method = "norm.predict", m = 1, seed = 123)
 data$loan_int_rate <- complete(imputed_data)$loan_int_rate
+
+# 2.3 Dealing with Missing Values in person_emp_length and loan_int_rate at once
+
+# Option1: Apply KNN imputation on both 'loan_int_rate' and 'person_emp_length' (or any other columns with missing values)
+data_imputed_knn <- kNN(data, variable = c("loan_int_rate", "person_emp_length"), k = 5, imp_var = FALSE)
+# Check for remaining missing values in the dataset
+colSums(is.na(data_imputed_knn)) # no remaining mssing values
+
+# Option 2: Apply PMM imputation on any other columns with missing values)
+imputed_data <- mice(data, method = "pmm", m = 1, maxit = 5) 
+# Extract the complete dataset with imputed values
+data_imputed_pmm <- complete(imputed_data)
+# Check for remaining missing values in 'loan_int_rate'
+sum(is.na(data_imputed_pmm$loan_int_rate))
 
 # 3. Outlier Detection ----
 # Outliers can impact our analysis and model, so we perform checks
