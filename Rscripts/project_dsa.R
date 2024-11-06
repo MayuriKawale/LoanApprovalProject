@@ -1,7 +1,7 @@
 library(tidyverse)    # For data manipulation and visualization
 library(ggplot2)      # For plotting
 library(corrplot)     # For correlation matrix plots
-
+library(VIM)
 library(dplyr)        # For data manipulation
 
 data <- read_csv("credit_risk_dataset.csv")
@@ -188,16 +188,39 @@ data <- data %>%
 data <- data %>%
   dplyr::mutate(person_emp_length = ifelse(person_emp_length > 60, 60, person_emp_length))
 
+
+ggplot(data, aes(x = person_emp_length, y = person_age)) +
+  geom_point(alpha = 0.5) + 
+  labs(title = "Scatter Plot of Person Age vs Employment Length",
+       x = "Employment Length (Years)",
+       y = "Person Age (Years)") +
+  theme_minimal()
+
+
+
 # Impute missing values
-median_emp_length <- median(data$person_emp_length, na.rm = TRUE)
 
-data <- data %>%
-  mutate(person_emp_length = ifelse(is.na(person_emp_length), median_emp_length, person_emp_length))
+#median_emp_length <- median(data$person_emp_length, na.rm = TRUE)
+
+#data <- data %>%
+#  mutate(person_emp_length = ifelse(is.na(person_emp_length), median_emp_length, person_emp_length))
 
 
-median_int_rate <- median(data$loan_int_rate, na.rm = TRUE)
-data <- data %>%
-  mutate(loan_int_rate = ifelse(is.na(loan_int_rate), median_int_rate, loan_int_rate))
+#median_int_rate <- median(data$loan_int_rate, na.rm = TRUE)
+#data <- data %>%
+#  mutate(loan_int_rate = ifelse(is.na(loan_int_rate), median_int_rate, loan_int_rate))
+
+# use knn
+
+imputed_data <- kNN(loanNumeric, variable = c("person_emp_length", "loan_int_rate"), k = 5)
+
+summary(imputed_data)
+
+data$person_emp_length <- imputed_data$person_emp_length
+data$loan_int_rate <- imputed_data$loan_int_rate
+
+summary(data)
+
 
 # Handling Outliers
 
@@ -205,13 +228,22 @@ income_cap <- quantile(data$person_income, 0.99)  # 99th percentile
 data <- data %>%
   mutate(person_income = ifelse(person_income > income_cap, income_cap, person_income))
 
+ggplot(data, aes(x = person_age, y = person_income)) +
+  geom_point(alpha = 0.5, color = "darkblue") +
+  geom_hline(yintercept = income_cap, linetype = "dashed", color = "red", size = 1) +
+  labs(title = "Scatter Plot of Person Income vs Person Age", 
+       x = "Person Age", y = "Person Income") +
+  theme_minimal()
+ggsave("scatter_plot_person_income.png", width = 8, height = 6, dpi = 300)
+
+
 summary(data)
 
 # distribution of loan amounts
 ggplot(data, aes(x = loan_amnt)) +
   geom_histogram(bins = 30, fill = "red", color = "black") +
   labs(title = "Distribution of Loan Amounts", x = "Loan Amount", y = "Count")
-
+ggsave("loan_amounts.png", width = 8, height = 6, dpi = 300)
 
 
 # Pie chart for loan intent distribution
@@ -225,7 +257,7 @@ ggplot(loan_intent_data, aes(x = "", y = pct, fill = loan_intent)) +
   labs(title = "Distribution of Loan Intent", x = NULL, y = NULL) +
   theme_void() + 
   theme(legend.title = element_blank())
-
+ggsave("pie_chart.png", width = 8, height = 6, dpi = 300)
 
 
 
