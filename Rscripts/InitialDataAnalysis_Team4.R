@@ -7,12 +7,14 @@ library(methods)
 library(stats)
 library(utils)
 
+library(tidyverse)
+library(dplyr)
+library(knitr)      # for kable
+library(kableExtra) # for kable styling
 library(ggplot2)     # for ggplot
 library(gridExtra)   # for grid.arrange
 library(ggcorrplot)  # for ggcorplot
 library(reshape2)    # for melted correlation matrix
-library(tidyverse)
-library(dplyr)
 library(forcats)     # for fct_lump
 library(VIM)         # for kNN
 library(fastDummies) # for dummy_cols
@@ -23,7 +25,135 @@ library(fastDummies) # for dummy_cols
 creditRisk <- read.csv("dataset/credit_risk_dataset.csv")
 
 creditRisk <- creditRisk %>%
-  dplyr::mutate(across(where(is.character), as.factor))
+  dplyr::mutate(across(where(is.character), as.factor)) # converts character to factors
+
+## To avoid encoding errors, we convert all text to UTF-8 format
+creditRisk[] <- lapply(creditRisk, function(x){
+  if(is.character(x)){iconv(x, from = "UTF-8", to = "UTF-8", sub = "byte")}
+  else{x}
+})
+
+## divide the dataset into numerical and categorical variables
+numData <- creditRisk %>%
+  dplyr::select(is.numeric)
+
+catData <- creditRisk %>%
+  dplyr::transmute(across(where(is.character), as.factor)) # converts character variables to factors
+
+## Take a look at these two datasets
+glimpse(numData)
+glimpse(catData)
+
+#################### Data Quality Report - Numerical variables #####################
+
+## Generate data quality report for numerical variables
+
+## Create custom function for first and third quartiles
+Q1 <- function(x, na.rm=TRUE){
+  quantile(x, na.rm=na.rm)[2]  # first quartile
+}
+
+Q3 <- function(x, na.rm=TRUE){
+  quantile(x, na.rm=na.rm)[4]  # third quartile
+}
+
+## Create custom function to define the summary statistics
+numSummary <- function(x){
+  return(c(length(x), n_distinct(x),sum(is.na(x)), mean(x, na.rm=TRUE), 
+           min(x, na.rm=TRUE), Q1(x, na.rm=TRUE), median(x, na.rm=TRUE),
+           Q3(x, na.rm=TRUE), max(x, na.rm=TRUE), sd(x, na.rm = TRUE)))
+}
+
+## Create the summary for numerical variables
+numericSummary <- numData %>% dplyr::summarise(across(everything(), numSummary))
+
+## Create labels for these summary statistics using cbind
+numericSummary <- cbind(stat=c("n","unique","missing","mean","min","Q1","median","Q3","max","sd"), numericSummary)
+
+## Tranform the data and add few more summary statistics
+numericSummary <- numericSummary %>%
+  pivot_longer(!stat, names_to = "variable", values_to = "value") %>%
+  pivot_wider(names_from = stat, values_from = value) %>%
+  dplyr::mutate(missing_pct = 100*missing/n,                                                    # add new columns
+                unique_pct = 100*unique/n) %>%
+  dplyr::select(variable, n, missing, missing_pct, unique, unique_pct, everything())
+
+
+## Let's view/produce this data quality report using kable
+options(digits=3)
+options(scipen=99)
+numericSummary %>% kable() %>% kable_styling(font_size = 12)
+
+#################### Data Quality Report - Categorical variables #####################
+
+## Generate data quality report for categorical/factorial variables
+
+## Create custom defined functions to identify the first, second or least common modes
+getmodes <- function(v,type=1) {
+  tbl <- table(v)
+  m1<-which.max(tbl)
+  if (type==1) {
+    return (names(m1)) #1st mode
+  }
+  else if (type==2) {
+    return (names(which.max(tbl[-m1]))) #2nd mode
+  }
+  else if (type==-1) {
+    return (names(which.min(tbl))) #least common mode
+  }
+  else {
+    stop("Invalid type selected")
+  }
+}
+
+## Create custom defined functions to identify the frequencies of the first, second, or least common modes
+getmodesCnt <- function(v,type=1) {
+  tbl <- table(v)
+  m1<-which.max(tbl)
+  if (type==1) {
+    return (max(tbl)) #1st mode freq
+  }
+  else if (type==2) {
+    return (max(tbl[-m1])) #2nd mode freq
+  }
+  else if (type==-1) {
+    return (min(tbl)) #least common freq
+  }
+  else {
+    stop("Invalid type selected")
+  }
+}
+
+## Create a custom defined summary function for categorical variables
+catSummary <- function(x){
+  return(c(length(x), n_distinct(x), sum(is.na(x)),
+           getmodes(x,type=1),  getmodesCnt(x,type=1),
+           getmodes(x,type=2),  getmodesCnt(x,type=2),
+           getmodes(x,type=-1), getmodesCnt(x,type=-1)))
+}
+
+## Create the summary for categorical variables
+categoricalSummary <- catData %>% dplyr::summarise(across(everything(), catSummary))
+
+## Generate labels for the summary statistics
+categoricalSummary <- cbind(stat=c("n", "unique", "missing", "1st mode", "1st mode freq", "2nd mode", 
+                                   "2nd mode freq", "least common", "least common freq"), categoricalSummary)
+
+## Transform the data and add few more summary statistics
+categoricalSummary <- categoricalSummary %>%
+  pivot_longer(!stat, names_to = "variable", values_to = "value") %>%
+  pivot_wider(names_from = stat, values_from = value) %>%
+  dplyr::mutate(across(c(n, missing, unique, `1st mode freq`, `2nd mode freq`, 
+                         `least common freq`), as.numeric))  %>%           # converts character values to numeric
+  dplyr::mutate(missing_pct = 100*missing/n,
+                unique_pct = 100*unique/n,
+                freqRatio = `1st mode freq`/ `2nd mode freq`) %>%
+  dplyr::select(variable, n, missing, missing_pct, unique, unique_pct, freqRatio, everything())
+
+## Let's view/produce this data quality report using kable
+options(digits=3)
+options(scipen=99)
+categoricalSummary %>% kable() %>% kable_styling(font_size = 12)
 
 ##################### Exploratory Data Analysis/Visualizations ###################
 
@@ -127,7 +257,7 @@ plot2 <- ggplot(creditRisk, aes(x = loan_intent, fill = as.factor(loan_status)))
         legend.title = element_text(size = 10),                           # Adjust legend title size
         legend.text = element_text(size = 8),                             # Adjust legend item text size
         legend.key.size = unit(0.5, "cm"))                                # Reduce the size of legend keys
-  
+
 
 #loan grade vs approval rate
 plot3 <- ggplot(creditRisk, aes(x = loan_grade, fill = as.factor(loan_status))) +
@@ -162,11 +292,11 @@ dev.off()
 
 # Heatmap/ correlation map
 corr_data <- dummy_cols(creditRisk, 
-             select_columns = c("person_home_ownership", 
-                                "loan_intent", "loan_grade", 
-                                "cb_person_default_on_file"),
-             remove_first_dummy = FALSE, 
-             remove_selected_columns = TRUE)
+                        select_columns = c("person_home_ownership", 
+                                           "loan_intent", "loan_grade", 
+                                           "cb_person_default_on_file"),
+                        remove_first_dummy = FALSE, 
+                        remove_selected_columns = TRUE)
 
 
 corr_data[] <- lapply(corr_data, function(x) as.numeric(as.character(x)))
@@ -190,7 +320,7 @@ ggplot(data = melted_cor_matrix, aes(x = Var1, y = Var2, fill = value)) +
         axis.text.x = element_text(angle = 45, hjust = 1))
 dev.off()
 
-  
+
 ######################## Handling Missing Values #########################################
 
 ## Only two variables have missing values: `person_emp_length` and `loan_int_rate`
@@ -201,7 +331,7 @@ dev.off()
 # perform kNN imputation kNN using k=5 i.e 5 neighbors
 creditRisk <- kNN(creditRisk, variable = c("person_emp_length", "loan_int_rate"), k=5, 
                   imp_var = FALSE   # no additional indicator column is created
-                  )
+)
 
 
 
@@ -258,3 +388,4 @@ creditRisk$person_income <- log(creditRisk$person_income)
 
 creditRisk$loan_intent <- fct_lump(creditRisk$loan_intent, n=3) # choosing top 4 i.e. (n+1) levels
 creditRisk$loan_grade <- fct_lump(creditRisk$loan_grade, n=3)   # choosing top 4 levels
+
