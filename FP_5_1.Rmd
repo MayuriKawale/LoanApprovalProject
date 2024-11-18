@@ -1,0 +1,586 @@
+---
+title: "FP_1"
+author: "Gen Feng"
+date: "2024-11-14"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library_loading}
+
+library(caret)
+library(tidyr)
+library(base)
+library(datasets)
+library(graphics)
+library(grDevices)
+library(methods)
+library(stats)
+library(utils)
+library(tidyverse)
+library(dplyr)
+library(knitr)      
+library(kableExtra) 
+library(parallel)
+library(doParallel)
+library(randomForest)
+
+library(MASS)        # for LDA
+library(kernlab)     # for SVM
+library(class)       # for kNN
+library(gbm)         # for Gradient Boosting Machine
+library(xgboost)     # for XGBoost
+library(ranger)      # for Random Forest
+library(glmnet)      # for Lasso Regression
+library(mice)
+```
+
+
+```{r data_loading}
+
+getwd()
+setwd("E:/FP/")
+
+train_data <- read.csv("credit_risk_dataset.csv")
+train_data_new <- train_data
+
+
+```
+
+```{r functions, eval = FALSE}
+
+func_UTF8 <- 
+  function(x) {
+    if(is.character(x)) {
+      iconv(x, from = "UTF-8", to = "UTF-8", sub = "byte")
+    } 
+    else { x }
+  }
+
+Q1 <- function(x, na.rm=TRUE){
+  quantile(x, na.rm=na.rm)[2]  # first quartile
+}
+
+Q3 <- function(x, na.rm=TRUE){
+  quantile(x, na.rm=na.rm)[4]  # third quartile
+}
+
+numSummary <- 
+  function(x) {
+    return( c(length(x), 
+            n_distinct(x),
+            sum(is.na(x) | x == "" | trimws(x) == ""), 
+            mean(x, na.rm=TRUE), 
+            min(x, na.rm=TRUE), 
+            Q1(x, na.rm=TRUE), 
+            median(x, na.rm=TRUE),
+            Q3(x, na.rm=TRUE), 
+            max(x, na.rm=TRUE), 
+            sd(x, na.rm = TRUE)))
+    }
+
+catSummary <- 
+  function(x) {
+    return(c(length(x), 
+           n_distinct(x), 
+           sum(is.na(x) | x == "" | trimws(x) == ""),
+           getmodes(x,type=1),  
+           getmodesCnt(x,type=1),
+           getmodes(x,type=2),  
+           getmodesCnt(x,type=2),
+           getmodes(x,type=-1), 
+           getmodesCnt(x,type=-1)))
+  }
+
+getmodes <- 
+  function(v,type=1) {
+    tbl <- table(v)
+    m1<-which.max(tbl)
+    if (type==1) {
+      return (names(m1)) #1st mode  
+    }
+    else if (type==2) {
+      return (names(which.max(tbl[-m1]))) #2nd mode
+    }
+    else if (type==-1) {
+      return (names(which.min(tbl))) #least common mode
+    }
+    else {
+      stop("Invalid type selected")
+    }
+  }
+
+getmodesCnt <- 
+  function(v,type=1) {
+    tbl <- table(v)
+    m1<-which.max(tbl)
+    if (type==1) {
+      return (max(tbl)) #1st mode freq
+    }
+    else if (type==2) {
+      return (max(tbl[-m1])) #2nd mode freq
+    }
+    else if (type==-1) {
+      return (min(tbl)) #least common freq
+    }
+    else {
+      stop("Invalid type selected")
+    }
+  }
+
+get_mode <- function(v) {
+  uniq_vals <- unique(v)
+  uniq_vals[which.max(tabulate(match(v, uniq_vals)))]
+}
+
+```
+
+
+```{r data_divided, eval = FALSE}
+
+train_data_new[] <- lapply(train_data_new, func_UTF8)
+
+numData_train <- train_data_new %>%
+  dplyr::select(where(is.numeric))
+
+catData_train <- train_data_new %>%
+  dplyr::transmute(across(where(is.character), as.factor)) 
+
+
+```
+
+```{r data_numericSummary, eval = FALSE}
+
+# numericSummary_train: Generate a data quality report for the numeric variables in the training dataset
+
+#  1: Create a summary of numeric variables in the training dataset using numSummary, 
+# which provides metrics like count, distinct values, missing values, mean, quartiles, 
+# max, and standard deviation.
+numericSummary_train <- numData_train %>% dplyr::reframe(across(everything(), numSummary))
+
+#  2: Assign row labels to the summary metrics for clear identification in the report.
+numericSummary_train <- 
+  cbind(stat=c("n","unique","missing","mean",
+               "min","Q1","median","Q3","max","sd"), 
+        numericSummary_train)
+
+#  3: Transform the data into a more readable format, calculate missing and unique percentages,
+# and reorder columns to prioritize essential metrics at the start of the report.
+numericSummary_train <- numericSummary_train %>%
+  pivot_longer(!stat, names_to = "variable", values_to = "value") %>%
+  pivot_wider(names_from = stat, values_from = value) %>%
+  dplyr::mutate(missing_pct = 100*missing/n,                                                   
+                unique_pct = 100*unique/n) %>%
+  dplyr::select(variable, n, missing, missing_pct, unique, unique_pct, everything())
+
+#  4: Display the report in a readable table format and save it as an HTML file for reference.
+options(digits=3)
+options(scipen=99)
+numericSummary_train %>% kable() %>% kable_styling(font_size = 12)
+
+save_kable(
+  numericSummary_train %>% kable() %>% kable_styling(font_size = 12),
+  file = "numericSummary_train.html"
+)
+
+
+
+```
+
+
+```{r categoricalSummary, eval = FALSE}
+
+# categoricalSummary_train: Generate a data quality report for the categorical variables in the training dataset
+
+
+#  2: Create a summary for categorical variables in the training dataset using catSummary,
+# including metrics such as count, unique values, missing values, and modes (most common values).
+categoricalSummary_train <- catData_train %>% dplyr::reframe(across(everything(), catSummary))
+
+#  3: Generate row labels for the summary statistics, such as count, unique values, and frequency of modes.
+categoricalSummary_train <- cbind(stat=c("n", "unique", "missing", "1st mode", "1st mode freq", "2nd mode", 
+                                   "2nd mode freq", "least common", "least common freq"), categoricalSummary_train)
+
+#  4: Transform the data into a more readable format, calculate additional metrics like missing 
+# and unique percentages, and add a frequency ratio between the top two modes to assess mode dominance.
+categoricalSummary_train <- categoricalSummary_train %>%
+  pivot_longer(!stat, names_to = "variable", values_to = "value") %>%
+  pivot_wider(names_from = stat, values_from = value) %>%
+  dplyr::mutate(across(c(n, missing, unique, `1st mode freq`, `2nd mode freq`, 
+                         `least common freq`), as.numeric))  %>%           
+  dplyr::mutate(missing_pct = 100*missing/n,
+                unique_pct = 100*unique/n,
+                freqRatio = `1st mode freq`/ `2nd mode freq`) %>%
+  dplyr::select(variable, n, missing, missing_pct, unique, unique_pct, freqRatio, everything())
+
+#  5: Display the report in a readable table format and save it as an HTML file for reference.
+options(digits=3)
+options(scipen=99)
+categoricalSummary_train %>% kable() %>% kable_styling(font_size = 12)
+
+save_kable(
+  categoricalSummary_train %>% kable() %>% kable_styling(font_size = 12),
+  file = "categoricalSummary_train.html"
+)
+
+
+```
+
+
+
+
+```{r data_preparing_1}
+
+# outliers: person_age person_emp_length  
+
+train_data_new <- train_data_new[train_data_new$person_age <= 70, ]
+
+
+# person_emp_length + 18 <= person_age
+
+train_data_new <- train_data_new[(is.na(train_data_new$person_emp_length)) | (train_data_new$person_emp_length + 18 <= train_data_new$person_age), ]
+
+
+```
+
+
+
+
+```{r}
+## Data Preprocessing :  
+
+
+# missing value: person_emp_length loan_int_rate
+
+# person_emp_length: PMM
+
+
+summary(train_data_new$person_emp_length)
+
+imputed_data <- mice(train_data_new[, c("person_emp_length", "person_age", "person_income", "cb_person_cred_hist_length")], 
+                     method = "pmm", m = 1, maxit = 5, seed = 123)
+
+completed_data <- complete(imputed_data)
+train_data_new$person_emp_length <- completed_data$person_emp_length
+
+
+
+# loan_int_rate
+imputed_data <- mice(train_data_new[, c("loan_int_rate", "loan_amnt", "person_income", 
+                              "loan_grade", "cb_person_cred_hist_length", 
+                              "cb_person_default_on_file")], 
+                     method = "pmm", m = 1, maxit = 5, seed = 123)
+
+summary(is.na(train_data_new$loan_int_rate))
+
+completed_data <- complete(imputed_data)
+
+train_data_new$loan_int_rate <- completed_data$loan_int_rate
+
+```
+
+
+
+```{r}
+# Encoding of categorical valuables: person_home_ownership loan_intent loan_grade cb_person_default_on_file
+
+# person_home_ownership
+
+train_data_new$person_home_ownership <- 
+  ifelse(train_data_new$person_home_ownership %in% c("OWN", "OTHER"), "OTHER", train_data_new$person_home_ownership)
+
+encoded_data <- model.matrix(~ person_home_ownership - 1, data = train_data_new)
+# head(encoded_data)
+
+train_data_new <- cbind(train_data_new, encoded_data)
+# str(train_data_new)
+
+
+
+# loan_intent
+
+encoded_data <- model.matrix(~ loan_intent - 1, data = train_data_new)
+# head(encoded_data)
+
+train_data_new <- cbind(train_data_new, encoded_data)
+# str(train_data_new)
+
+
+# loan_grade
+train_data_new$loan_grade <- ifelse(train_data_new$loan_grade %in% c("F", "G"), "Other", train_data_new$loan_grade)
+train_data_new$loan_grade <- factor(train_data_new$loan_grade, levels = c("A", "B", "C", "D", "E", "Other"), ordered = TRUE)
+train_data_new$loan_grade_numeric <- as.numeric(train_data_new$loan_grade)
+
+# # 查看结果
+# table(train_data_new$loan_grade, train_data_new$loan_grade_numeric)
+
+
+# cb_person_default_on_file
+train_data_new$cb_person_default_on_file <- factor(train_data_new$cb_person_default_on_file, levels = c("N", "Y"))
+train_data_new$cb_person_default_numeric <- as.numeric(train_data_new$cb_person_default_on_file) - 1
+
+# table(train_data_new$cb_person_default_on_file, train_data_new$cb_person_default_numeric)
+
+## del: person_home_ownership loan_intent loan_grade cb_person_default_on_file
+train_data_new <- train_data_new %>% dplyr::select(-person_home_ownership, -loan_intent, -loan_grade, -cb_person_default_on_file)
+
+
+# person_age
+# summary(train_data_new$person_age)
+# boxplot(train_data_new$person_age, main = "Boxplot of Person Age")
+
+train_data_new$log_age <- log(train_data_new$person_age + 1)
+# hist(train_data_new$log_age, main = "Log-Transformed Age", xlab = "Log Age")
+
+# person_income
+train_data_new$log_income <- log(train_data_new$person_income + 1)
+# hist(train_data_new$log_income, main = "Log-Transformed income", xlab = "Log income")
+
+# person_emp_length
+train_data_new$log_emp_length <- log(train_data_new$person_emp_length + 1)
+# hist(train_data_new$log_emp_length, main = "Log-Transformed Employment Length", xlab = "Log Employment Length")
+
+# loan_amnt
+train_data_new$log_loan_amnt <- log(train_data_new$loan_amnt + 1)
+# hist(train_data_new$log_loan_amnt, main = "Log-Transformed Loan Amount", xlab = "Log Loan Amount")
+
+# loan_int_rate
+train_data_new$log_int_rate <- log(train_data_new$loan_int_rate + 1)
+# hist(train_data_new$log_int_rate, main = "Log-Transformed Interest Rate", xlab = "Log Interest Rate")
+
+# loan_percent_income
+train_data_new$loan_percent_income <- train_data_new$loan_amnt / train_data_new$person_income
+# hist(train_data_new$loan_percent_income, main = "Loan Amount as a Percentage of Income", xlab = "Loan Percent Income")
+
+# cb_person_cred_hist_length
+train_data_new$log_cred_hist_length <- log(train_data_new$cb_person_cred_hist_length + 1)
+# hist(train_data_new$log_cred_hist_length, main = "Log-Transformed Credit History Length", xlab = "Log Credit History Length")
+
+# del person_age person_income person_emp_length loan_amnt loan_int_rate cb_person_cred_hist_length
+train_data_new <- train_data_new %>% dplyr::select(-person_age, -person_income, -person_emp_length, -loan_amnt, -loan_int_rate, -cb_person_cred_hist_length)
+
+```
+
+
+```{r}
+# Feature Engineering: 
+
+var_loan_statue <- train_data_new$loan_status
+
+preprocess_params <- preProcess(train_data_new, method = c("center", "scale"))
+train_data_new <- predict(preprocess_params, train_data_new)
+train_data_new$loan_status <- var_loan_statue
+train_data_new$loan_status <- as.factor(train_data_new$loan_status)
+
+nzv <- nearZeroVar(train_data_new, saveMetrics = TRUE)
+train_data_new <- train_data_new[, !nzv$nzv]
+
+str(train_data_new)
+
+```
+
+
+```{r}
+
+customSummary <- function(data, lev = NULL, model = NULL) {
+  acc <- caret::confusionMatrix(data$pred, data$obs)$overall["Accuracy"]
+  kappa <- caret::confusionMatrix(data$pred, data$obs)$overall["Kappa"]
+  
+  # 返回一个含指标的列表
+  return(c(
+    ROC = twoClassSummary(data, lev = lev, model = model)["ROC"],
+    Sens = sensitivity(data$pred, data$obs, lev[1]),
+    Spec = specificity(data$pred, data$obs, lev[2]),
+    Accuracy = acc,
+    Kappa = kappa
+  ))
+}
+
+cv_control <- trainControl(
+  method = "cv",                 # 交叉验证
+  number = 3,                    # 5 折交叉验证
+  verboseIter = TRUE,            # 输出每次训练的结果
+  allowParallel = TRUE,          # 支持并行
+  classProbs = TRUE,             # 输出类别概率
+  summaryFunction = customSummary # 使用 ROC 曲线评估性能
+)
+
+xgb_grid <- expand.grid(
+  nrounds = c(50, 100),      # 树的最大轮数
+  max_depth = c(3, 6),         # 树的最大深度
+  eta = c(0.1, 0.3),        # 学习率
+  gamma = c(0),                # 最小分裂损失
+  colsample_bytree = c(0.8), # 每次构建树时特征列采样比例
+  subsample = c(0.8),        # 样本采样比例
+  min_child_weight = c(1)      # 最小叶子节点样本权重和
+)
+
+train_data_new$loan_status <- factor(train_data_new$loan_status, levels = c(0, 1), labels = c("No", "Yes"))
+
+
+
+set.seed(123)
+xgb_model_cv <- train(
+  x = train_data_new[, -1], 
+  y = train_data_new$loan_status,         # 注意将目标变量转为 factor 类型
+  method = "xgbTree",                           # 使用 xgboost
+  trControl = cv_control,                       # 设置交叉验证控制
+  tuneGrid = xgb_grid,                          # 设置网格搜索参数
+  metric = "ROC.ROC"                                # 使用 ROC 曲线作为评估指标
+)
+
+xgb_model_cv$results
+print(xgb_model_cv)
+summary(xgb_model_cv)
+
+final_model <- ranger_model$finalModel
+print(final_model)
+
+```
+
+
+
+
+
+```{r}
+
+customSummary <- function(data, lev = NULL, model = NULL) {
+  # Confusion matrix
+  cm <- confusionMatrix(data = data$pred, reference = data$obs, positive = lev[2])
+  
+  # Extract metrics
+  accuracy <- cm$overall["Accuracy"]
+  kappa <- cm$overall["Kappa"]
+  sensitivity <- cm$byClass["Sensitivity"]
+  specificity <- cm$byClass["Specificity"]
+  
+  # Return metrics
+  out <- c(Accuracy = accuracy, Kappa = kappa, Sens = sensitivity, Spec = specificity)
+  return(out)
+}
+
+cv_control <- trainControl(
+  method = "cv",                 # 交叉验证
+  number = 3,                    # 5 折交叉验证
+  verboseIter = TRUE,            # 输出每次训练的结果
+  allowParallel = TRUE,          # 支持并行
+  classProbs = TRUE,             # 输出类别概率
+  summaryFunction = customSummary # 使用 ROC 曲线评估性能
+)
+
+xgb_grid <- expand.grid(
+  nrounds = c(50, 100),      # 树的最大轮数
+  max_depth = c(3, 6),         # 树的最大深度
+  eta = c(0.1, 0.3),        # 学习率
+  gamma = c(0),                # 最小分裂损失
+  colsample_bytree = c(0.8), # 每次构建树时特征列采样比例
+  subsample = c(0.8),        # 样本采样比例
+  min_child_weight = c(1)      # 最小叶子节点样本权重和
+)
+
+train_data_new$loan_status <- factor(train_data_new$loan_status, levels = c(0, 1), labels = c("No", "Yes"))
+
+set.seed(123)
+xgb_model_cv <- train(
+  x = train_data_new[, -1], 
+  y = train_data_new$loan_status,         # 注意将目标变量转为 factor 类型
+  method = "xgbTree",                           # 使用 xgboost
+  trControl = cv_control,                       # 设置交叉验证控制
+  tuneGrid = xgb_grid,                          # 设置网格搜索参数
+  metric = "Accuracy.Accuracy"                                # 使用 ROC 曲线作为评估指标
+)
+
+xgb_model_cv$results
+print(xgb_model_cv)
+summary(xgb_model_cv)
+
+
+```
+
+
+
+
+
+```{r}
+
+cv_control <- trainControl(
+  method = "cv",                 # 交叉验证
+  number = 3,                    # 5 折交叉验证
+  verboseIter = TRUE,            # 输出每次训练的结果
+  allowParallel = TRUE,          # 支持并行
+  classProbs = TRUE,             # 输出类别概率
+  summaryFunction = twoClassSummary # 使用 ROC 曲线评估性能
+)
+
+xgb_grid <- expand.grid(
+  nrounds = c(50, 100),      # 树的最大轮数
+  max_depth = c(3, 6),         # 树的最大深度
+  eta = c(0.1, 0.3),        # 学习率
+  gamma = c(0),                # 最小分裂损失
+  colsample_bytree = c(0.8), # 每次构建树时特征列采样比例
+  subsample = c(0.8),        # 样本采样比例
+  min_child_weight = c(1)      # 最小叶子节点样本权重和
+)
+
+train_data_new$loan_status <- factor(train_data_new$loan_status, levels = c(0, 1), labels = c("No", "Yes"))
+
+set.seed(123)
+xgb_model_cv <- train(
+  x = train_data_new[, -1], 
+  y = train_data_new$loan_status,         # 注意将目标变量转为 factor 类型
+  method = "xgbTree",                           # 使用 xgboost
+  trControl = cv_control,                       # 设置交叉验证控制
+  tuneGrid = xgb_grid,                          # 设置网格搜索参数
+  metric = "ROC"                                # 使用 ROC 曲线作为评估指标
+)
+
+xgb_model_cv$results
+print(xgb_model_cv)
+summary(xgb_model_cv)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
