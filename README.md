@@ -7,4 +7,5 @@ For a loan approval prediction since it involves labeled data, it makes sense to
 Unsupervised learning model is useful when they are no labels and the goal is to find hidden patterns or anomalies.
 An attempt was made to use unsupervised learning model. In particular, density based spatial clustering with noise (`DBSCAN`) was used to check if it predicts two clusters. The reason to choose `DBSCAN` clustering instead of `k-means` or `hierarchical clustering` is that there is no requirement to specify the number of clusters. Initially it appeared that the model predicted 2 clusters and several anomalies, however the values for evaluation metrics like `precision`, `recall` and `F1 Score` had perfect scores of 1 and raised some alarms. Futher debugging led to the conclusion that truth labels were used accidentally in `DBSCAN` clustering and thus it resulted in two perfect clusters and some noise points/anomalies. These results are shown in the appendix of the report report. .
 
-
+# Executive Summary/Report
+Look for the `FinalReport_Team4.pdf` for a detailed report showing executive summary, exploratory data analysis (EDA), feature engineering, missing value imputation, feature transformations, models used, results and comments on future improvements.
